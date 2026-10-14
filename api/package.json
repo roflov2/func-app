@@ -1,0 +1,17 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Azure Functions v4 (Node.js) app that serves /api/status and the built React SPA",
+  "main": "src/functions/*.js",
+  "scripts": {
+    "start": "func start",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@azure/functions": "^4.16.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
