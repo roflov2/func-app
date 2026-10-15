@@ -169,5 +169,14 @@ npm run start:api
 The API serves the build straight from `client/dist`, so there's nothing to copy. The page and
 the API share the proxy's origin, so `func start` needs no `--cors` flag.
 
+If `https_proxy` is set (for a corporate proxy) and `func start` fails with
+`Failed to connect to 127.0.0.1:… through proxy`, the Node worker is sending its local gRPC
+connection to the Functions host through the proxy. gRPC only reads the lowercase `no_proxy`,
+so exclude local addresses for it before starting:
+
+```sh
+export no_grpc_proxy=localhost,127.0.0.1   # add to ~/.bashrc to keep it
+```
+
 Keep the relative base out of `vite.config.js`. The default absolute base is right everywhere
 else.
