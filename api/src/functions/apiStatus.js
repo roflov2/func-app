@@ -15,8 +15,7 @@ app.http('apiStatus', {
             headers: { 'Cache-Control': 'no-store' },
             jsonBody: {
                 status: 'ok',
-                service: 'func-app-api',
-                message: 'Hello from the Azure Functions v4 backend!',
+                service: 'scamwatch-sql-assistant-api',
                 timestamp: new Date().toISOString(),
                 uptimeSeconds: Math.round((Date.now() - startedAt.getTime()) / 1000),
                 node: process.version,

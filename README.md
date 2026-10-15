@@ -1,91 +1,147 @@
-# func-app
+# Scamwatch SQL assistant
 
-A Vite + React single-page app wrapped in a Node.js Azure Functions app (programming model v4).
-One Functions host on `http://localhost:7071` serves both:
+A chat app for asking plain-English questions about one Azure SQL table. Azure OpenAI writes
+T-SQL, the app runs it read-only, and the model explains what it found. Each answer comes
+with the full result (sortable, downloadable as CSV), the SQL it ran, and any failed attempts.
 
-| Route         | Function       | Response                                                   |
-| ------------- | -------------- | ---------------------------------------------------------- |
-| `/api/status` | `apiStatus`    | Mock JSON status payload                                   |
-| `/{*path}`    | `spaHandler`   | Files from `client/dist`, or `index.html` for SPA routes   |
+It's a React single-page app served by a Node.js Azure Functions app (programming model v4).
+It is a port of the Streamlit app (`app.py` and `text_to_sql_agent.py`) and works the same
+way:
+
+- **Connection settings** in the sidebar: SQL server, database, table, Azure OpenAI endpoint,
+  API version, deployment, and how many rows of each result the model reads.
+- **Data dictionary.** Upload an optional `.txt` file describing the columns, codes and
+  business rules. It's sent with every question, inside the system prompt. You can download a
+  template that already lists every column. The page shows which columns the file names, and
+  warns when it's over 40,000 characters (the rest isn't sent).
+- **Answering settings:** SQL attempts per question (1–5), follow-up questions (sends the last
+  3 question/answer pairs, with the SQL each answer used), and clearing the conversation.
+- **Table overview:** the columns and types (plus whether the dictionary covers each one),
+  three sample rows, and the dictionary text.
+- **Read-only SQL.** Only a single `SELECT` (or `WITH … SELECT`) runs. Write keywords,
+  multiple statements and `SELECT … INTO` are rejected before the query reaches the database.
+  The model sees at most the preview row limit, with min/max/mean for numeric columns. The
+  table always shows the full result, up to 50,000 rows.
+
+## Layout
 
 ```text
 .
-├── package.json             # root scripts (install / build / start / test)
-├── client/                  # Vite + React frontend (React Router)
-└── api/                     # Azure Functions v4 Node.js backend (CommonJS)
-    ├── host.json            # routePrefix "" so the catch-all can own "/"
-    ├── local.settings.json  # FUNCTIONS_WORKER_RUNTIME=node, SPA_DIST_PATH
-    ├── package.json         # "main": "src/functions/*.js"
-    ├── src/functions/
-    │   ├── apiStatus.js
-    │   └── spaHandler.js
-    └── test/                # node:test tests for both handlers
+├── package.json                 # root scripts (install / build / start / test)
+├── client/                      # React SPA
+│   └── src/
+│       ├── App.jsx              # page: connection state, chat, table overview, examples
+│       ├── components/          # sidebar, chat messages, data table, small UI pieces
+│       └── lib/                 # API calls, chat history, CSV download, AML proxy prefix
+└── api/                         # Azure Functions v4 (Node.js, CommonJS)
+    ├── host.json                # routePrefix "" so the SPA can be served from "/"
+    ├── local.settings.json      # local app settings
+    ├── src/functions/           # HTTP endpoints (one file each)
+    ├── src/lib/
+    │   ├── textToSqlAgent.js    # the agent: schema, tool-calling loop, previews, stats
+    │   ├── sqlSafety.js         # read-only query check
+    │   ├── dataDictionary.js    # decode, tidy, cap and check uploaded dictionaries; template
+    │   ├── sqlClient.js         # Azure SQL over Entra ID (mssql/tedious, no ODBC driver)
+    │   ├── agentCache.js        # one agent per connection setting, reused across requests
+    │   ├── config.js            # default settings from app settings; validation
+    │   └── answers.js           # request validation and reply shaping
+    └── test/                    # node:test tests
 ```
+
+## Endpoints
+
+| Route                  | Function     | What it does                                                                    |
+| ---------------------- | ------------ | ------------------------------------------------------------------------------- |
+| `GET /api/config`      | `getConfig`  | Default connection settings (from app settings) and input limits                |
+| `POST /api/connect`    | `connect`    | Connects (or reuses the connection) and returns columns, sample rows, template  |
+| `POST /api/dictionary` | `dictionary` | Reads an uploaded `.txt` dictionary (multipart: `file`, `columns`)              |
+| `POST /api/query`      | `ask`        | Answers one question: `{ config, question, history, maxAttempts, dictionary }`  |
+| `GET /api/status`      | `apiStatus`  | Health check                                                                    |
+| `GET /{*path}`         | `spaHandler` | The built SPA from `client/dist`                                                |
+
+The browser sends the connection settings with every request, so the API keeps no per-user
+state. Each Functions worker caches one agent per distinct setting, like Streamlit's
+`st.cache_resource`. A connection that fails is never cached, so selecting **Connect** again
+retries.
 
 ## Prerequisites
 
 - Node.js 20 or newer
-- [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local), which provides the `func` command:
+- [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
+  (`npm install -g azure-functions-core-tools@4`)
+- The [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), signed in with an
+  account that can read the table and call the Azure OpenAI deployment:
+  - **Azure SQL:** a database user for the account, e.g.
+    `CREATE USER [you@example.com] FROM EXTERNAL PROVIDER; GRANT SELECT ON Reporting.ScamWatchReportFiltered TO [you@example.com];`
+  - **Azure OpenAI:** the *Cognitive Services OpenAI User* role on the resource
+- Network access from the machine running the Functions host to the SQL server on port 1433
 
-  ```sh
-  npm install -g azure-functions-core-tools@4
-  # or: brew tap azure/functions && brew install azure-functions-core-tools@4
-  # or: winget install Microsoft.Azure.FunctionsCoreTools
-  ```
+No ODBC driver is needed. The Node SQL driver talks to Azure SQL directly.
 
 ## Run locally
 
 ```sh
-npm install      # also installs client/ and api/ dependencies (postinstall)
+az login
+npm install      # also installs client/ and api/ dependencies
 npm start        # builds client/dist, then runs `func start` in api/
 ```
 
-Then open:
+Then open http://localhost:7071/.
 
-- http://localhost:7071/ (the SPA)
-- http://localhost:7071/about (a client-side route; reloading it still works)
-- http://localhost:7071/api/status (the JSON API)
+| Command              | What it does                                                    |
+| -------------------- | --------------------------------------------------------------- |
+| `npm run build`      | Builds the SPA into `client/dist`                               |
+| `npm run start:api`  | Runs `func start` without rebuilding the SPA                    |
+| `npm run dev:client` | Vite dev server with hot reload on :5173; proxies `/api` to :7071 |
+| `npm test`           | Runs the API tests (no database, model or Functions host needed) |
+| `npm run lint`       | Lints the client                                                |
 
-### Other scripts
+## Settings
 
-| Command              | What it does                                                          |
-| -------------------- | --------------------------------------------------------------------- |
-| `npm run build`      | Builds the SPA into `client/dist`                                     |
-| `npm run start:api`  | Runs `func start` without rebuilding the SPA                          |
-| `npm run dev:client` | Vite dev server with HMR on :5173; proxies `/api` to :7071            |
-| `npm test`           | Runs the API handler tests (no Functions host needed)                 |
-| `npm run lint`       | Lints the client                                                      |
+Set these as app settings in Azure, or under `Values` in `api/local.settings.json`. They
+become the defaults in the connection form, so the same code runs in dev and prod.
 
-For frontend work with hot reload, run `npm run start:api` in one terminal and
-`npm run dev:client` in another, then use http://localhost:5173.
+| Setting                        | Default                                            |
+| ------------------------------ | -------------------------------------------------- |
+| `SQL_SERVER`                   | `sqlnascdlpsprod.database.windows.net`             |
+| `SQL_DATABASE`                 | `NASC_ODS`                                         |
+| `SQL_TABLE`                    | `Reporting.ScamWatchReportFiltered`                |
+| `AZURE_OPENAI_ENDPOINT`        | `https://nasc-prod-east-mlp-oai.openai.azure.com/` |
+| `AZURE_OPENAI_API_VERSION`     | `2024-12-01-preview`                               |
+| `AZURE_OPENAI_DEPLOYMENT`      | `gpt-4o`                                           |
+| `LLM_PREVIEW_LIMIT`            | `20`                                               |
+| `ALLOWED_SQL_SERVER_SUFFIXES`  | `.database.windows.net`                            |
+| `ALLOWED_OPENAI_HOST_SUFFIXES` | `.openai.azure.com,.cognitiveservices.azure.com,.services.ai.azure.com` |
+| `SPA_DIST_PATH`                | `../client/dist` (relative to `api/`)              |
 
-## How it works
+**Why the allowed suffixes exist.** The app signs in to SQL and Azure OpenAI with its own
+identity: your `az login` account locally, or the Function App's managed identity in Azure.
+The connection form can still point it at any server, but the API only accepts hosts on these
+suffixes, so an access token is never sent to a server someone else controls. Change them for
+sovereign clouds (e.g. `.database.usgovcloudapi.net`). The table name must be a plain
+`schema.table` identifier.
 
-- **Route prefix.** `api/host.json` sets `extensions.http.routePrefix` to `""`, so function
-  routes are mounted at the site root. `apiStatus` declares `route: 'api/status'`, and
-  `spaHandler` declares the catch-all `route: '{*path}'`. The host matches more specific
-  routes first, so `/api/status` never reaches the catch-all.
-- **Static files.** `spaHandler` reads from `SPA_DIST_PATH` (set to `../client/dist` in
-  `local.settings.json`; relative paths resolve against `api/`). It returns a file when one
-  exists, with a matching `Content-Type`. Vite's hashed `/assets/*` files get
-  `Cache-Control: immutable`, and everything else gets `no-cache`.
-- **SPA fallback.** Extensionless paths with no matching file (`/about`, `/users/42`) return
-  `index.html`, and React Router renders the view. Missing paths that have a file extension
-  return `404` instead of HTML. Unknown `/api/*` paths return a JSON `404`. Requests that
-  try to escape the dist directory are blocked.
-- If `client/dist` hasn't been built yet, the catch-all returns `503` with a message to run
-  `npm run build`.
+## Deploying to Azure
+
+- **Turn on authentication.** The functions use `authLevel: 'anonymous'`, so put App Service
+  Authentication (Easy Auth) with Microsoft Entra ID in front of the Function App. Otherwise
+  anyone who finds the URL can query the table with the app's identity.
+- **Grant access.** Give the Function App a managed identity, then grant it the same SQL and
+  Azure OpenAI access described under Prerequisites.
+- **Ship the SPA.** Only `api/` is deployed, so put the build inside it. For example, copy
+  `client/dist` to `api/www` before publishing and set `SPA_DIST_PATH` to `www`.
+- **Timeouts.** Azure ends HTTP requests to a Function App after 230 seconds. Each SQL query
+  times out after 180 seconds, but several slow attempts in one question can still hit the
+  limit.
 
 ## Running behind the Azure ML Jupyter proxy
 
-On an Azure ML compute instance, the app is reached at `https://<instance>/proxy/7071/`, and the
-proxy strips that prefix before forwarding to the Functions host. The client handles this at
-runtime. `client/src/main.jsx` uses `/proxy/<port>` as the React Router `basename`, and
-`client/src/App.jsx` prepends it to the `/api/status` call. Anywhere else (localhost, a real
-Function App) the prefix doesn't match, so the router root stays `/` and the call stays
-`/api/status`.
+On an Azure ML compute instance, the app is reached at `https://<instance>/proxy/7071/`. The
+proxy strips that prefix before forwarding to the Functions host. `client/src/lib/proxyPrefix.js`
+detects the prefix at runtime and adds it to every API call. Anywhere else the prefix doesn't
+match, so calls go to `/api/...` as usual.
 
-The built `index.html` must also load assets relative to the proxy path, so build with a
+The built `index.html` must also load its assets relative to the proxy path, so build with a
 relative base on AML:
 
 ```sh
@@ -93,12 +149,5 @@ npm run build --prefix client -- --base=./   # or: cd client && npx vite build -
 npm run start:api
 ```
 
-Keep the relative base out of `vite.config.js`. With `--base=./`, reloading a client route two
-or more levels deep (e.g. `/does/not/exist`) loads assets from `/does/not/assets/...` and shows a
-blank page. The default absolute base used by `npm run build` doesn't have this problem.
-
-## Deploying to Azure
-
-Only `api/` is deployed as the Function App, so ship the SPA build inside it. For example,
-copy `client/dist` to `api/www` before publishing and set the `SPA_DIST_PATH` app setting
-to `www`. `local.settings.json` is local-only and excluded via `.funcignore`.
+Keep the relative base out of `vite.config.js`. The default absolute base is right everywhere
+else.

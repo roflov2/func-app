@@ -1,116 +1,276 @@
-import { useEffect, useState } from 'react'
-import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { askQuestion, connect, getConfig, readDictionary } from './lib/api.js'
+import { buildHistory, EXAMPLE_QUESTIONS } from './lib/chat.js'
+import { Answer, ChatInput, ChatMessage, MarkdownText } from './components/Chat.jsx'
+import DataTable from './components/DataTable.jsx'
+import { AnsweringSettings, ConnectionSettings, DictionarySettings } from './components/Sidebar.jsx'
+import { Alert, Caption, CodeBlock, Expander, Spinner } from './components/ui.jsx'
 import './App.css'
 
-// Keep API calls inside the Azure ML proxy (/proxy/<port>) when running behind it,
-// including from nested client routes like /proxy/7071/about. Empty elsewhere.
-const proxyPrefix = window.location.pathname.match(/^(\/proxy\/\d+)/)?.[1] ?? ''
+const WIDE_SCREEN = '(min-width: 900px)'
 
-async function fetchStatus() {
-  try {
-    const res = await fetch(`${proxyPrefix}/api/status`, { headers: { Accept: 'application/json' } })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    return { loading: false, data: await res.json(), error: null }
-  } catch (err) {
-    return { loading: false, data: null, error: err.message }
-  }
+function ConnectionError({ config, error }) {
+  return (
+    <>
+      <Alert kind="error">
+        <p>
+          Couldn&apos;t connect to {config.table} on {config.server}.
+        </p>
+        <p className="pre-line">{error}</p>
+      </Alert>
+      <div className="markdown">
+        <p>To fix this, check that:</p>
+        <ul>
+          <li>
+            the app&apos;s Azure identity can read the table: your <code>az login</code> account when running
+            locally, or the Function App&apos;s managed identity in Azure
+          </li>
+          <li>the Functions host can reach the server on port 1433</li>
+        </ul>
+        <p>
+          Then update the settings in the sidebar if needed and select <strong>Connect</strong>.
+        </p>
+      </div>
+    </>
+  )
 }
 
-function ApiStatus() {
-  const [state, setState] = useState({ loading: true, data: null, error: null })
+/** The table's columns and, when one is loaded, the data dictionary. */
+function TableOverview({ info, table, dictionary }) {
+  const mentioned = new Set(dictionary?.mentioned ?? [])
+  const columnRows = info.columns.map(({ name, type }) => (dictionary ? [name, type, mentioned.has(name)] : [name, type]))
+  const missing = info.columns.length - mentioned.size
 
-  useEffect(() => {
-    let cancelled = false
-    fetchStatus().then((next) => {
-      if (!cancelled) setState(next)
-    })
-    return () => {
-      cancelled = true
+  return (
+    <>
+      <Expander title={`Columns in ${table} (${info.columns.length})`}>
+        <DataTable columns={dictionary ? ['Column', 'Type', 'In dictionary'] : ['Column', 'Type']} rows={columnRows} />
+        {dictionary && missing > 0 && (
+          <Caption>
+            Not named in the dictionary: {missing}. For these the assistant goes on the column name, type and sample
+            rows alone.
+          </Caption>
+        )}
+        {info.sampleRows.rows.length > 0 && (
+          <>
+            <Caption>Sample rows</Caption>
+            <DataTable columns={info.sampleRows.columns} rows={info.sampleRows.rows} />
+          </>
+        )}
+      </Expander>
+      {dictionary && (
+        <Expander title={`Data dictionary: ${dictionary.name}`}>
+          <Caption>This text is sent to the assistant with each question.</Caption>
+          <div className="dictionary-scroll">
+            <CodeBlock code={dictionary.text} wrap />
+          </div>
+        </Expander>
+      )}
+    </>
+  )
+}
+
+function Examples({ hasDictionary, disabled, onAsk }) {
+  return (
+    <div className="examples">
+      {!hasDictionary && (
+        <Alert kind="info">
+          Answers improve when the assistant knows what the columns mean. Upload a data dictionary in the sidebar, or
+          download the template there to write one.
+        </Alert>
+      )}
+      <p>Ask anything about the table, or start with one of these:</p>
+      {EXAMPLE_QUESTIONS.map((question) => (
+        <button key={question} type="button" className="button example" disabled={disabled} onClick={() => onAsk(question)}>
+          {question}
+        </button>
+      ))}
+    </div>
+  )
+}
+
+export default function App() {
+  const [boot, setBoot] = useState({ defaults: null, error: null })
+  // status: idle | connecting | ready | error. `info` is the /api/connect response.
+  const [connection, setConnection] = useState({ status: 'idle', config: null, info: null, error: null })
+  const [file, setFile] = useState(null)
+  const [dictionaryResult, setDictionaryResult] = useState(null)
+  const [settings, setSettings] = useState({ maxAttempts: 3, useHistory: true })
+  const [messages, setMessages] = useState([])
+  const [pending, setPending] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia(WIDE_SCREEN).matches)
+  const latestConnect = useRef(0)
+  const bottom = useRef(null)
+
+  const connectTo = useCallback(async (config) => {
+    const attempt = ++latestConnect.current
+    setConnection({ status: 'connecting', config, info: null, error: null })
+    try {
+      const info = await connect(config)
+      if (attempt === latestConnect.current) {
+        setConnection({ status: 'ready', config: info.config, info, error: null })
+      }
+    } catch (err) {
+      if (attempt === latestConnect.current) {
+        setConnection({ status: 'error', config, info: null, error: err.message })
+      }
     }
   }, [])
 
-  const refresh = async () => {
-    setState((s) => ({ ...s, loading: true, error: null }))
-    setState(await fetchStatus())
+  // Load the default settings, then connect with them, as the Streamlit app does on first load.
+  useEffect(() => {
+    getConfig().then(
+      (defaults) => {
+        setBoot({ defaults, error: null })
+        connectTo(defaults.config)
+      },
+      (err) => setBoot({ defaults: null, error: err.message }),
+    )
+  }, [connectTo])
+
+  // Read the uploaded dictionary against the connected table's columns. It's read
+  // again after reconnecting, since which columns it names depends on the table.
+  const info = connection.info
+  useEffect(() => {
+    if (!file || !info) return
+    let cancelled = false
+    readDictionary(
+      file,
+      info.columns.map((column) => column.name),
+    ).then(
+      (result) =>
+        !cancelled && setDictionaryResult({ file, info, value: result.dictionary, maxChars: result.maxChars, error: null }),
+      (err) => !cancelled && setDictionaryResult({ file, info, value: null, error: err.message }),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [file, info])
+
+  const current = dictionaryResult?.file === file && dictionaryResult?.info === info ? dictionaryResult : null
+  const dictionary = {
+    loading: Boolean(file && info && !current),
+    value: file ? (current?.value ?? null) : null,
+    error: file ? (current?.error ?? null) : null,
+    maxChars: current?.maxChars ?? boot.defaults?.limits.maxDictionaryChars ?? 0,
   }
 
-  return (
-    <section className="card">
-      <h2>
-        Backend status <code>GET /api/status</code>
-      </h2>
-      {state.error && <p className="error">Could not reach the API: {state.error}</p>}
-      {state.data && <pre className="json">{JSON.stringify(state.data, null, 2)}</pre>}
-      <button type="button" className="button" onClick={refresh} disabled={state.loading}>
-        {state.loading ? 'Loading…' : 'Refresh'}
-      </button>
-    </section>
-  )
-}
+  useEffect(() => {
+    if (messages.length) bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages.length, pending])
 
-function Home() {
+  async function ask(question) {
+    if (pending || connection.status !== 'ready') return
+    const history = settings.useHistory ? buildHistory(messages) : []
+    const used = dictionary.value
+    setMessages((previous) => [...previous, { role: 'user', content: question }])
+    setPending(true)
+    let reply
+    try {
+      reply = await askQuestion({
+        config: connection.config,
+        question,
+        history,
+        maxAttempts: settings.maxAttempts,
+        dictionary: used && { name: used.name, text: used.text },
+      })
+    } catch (err) {
+      reply = { role: 'assistant', content: '', error: `The question couldn't be answered. ${err.message}` }
+    }
+    setMessages((previous) => [...previous, reply])
+    setPending(false)
+  }
+
+  const ready = connection.status === 'ready'
+  const table = connection.config?.table
+
   return (
-    <>
-      <div className="logos">
-        <img src={viteLogo} alt="Vite logo" />
-        <img src={reactLogo} alt="React logo" />
+    <div className={`layout${sidebarOpen ? ' sidebar-open' : ''}`}>
+      <aside className="sidebar" aria-label="Settings" inert={!sidebarOpen}>
+        <div className="sidebar-header">
+          <button type="button" className="icon-button" onClick={() => setSidebarOpen(false)} aria-label="Close settings">
+            «
+          </button>
+        </div>
+        {boot.defaults && (
+          // The connection form comes first so it's still there to fix if connecting fails.
+          <ConnectionSettings config={boot.defaults.config} limits={boot.defaults.limits} onConnect={connectTo} />
+        )}
+        {ready && (
+          <>
+            <DictionarySettings
+              table={table}
+              connection={connection.info}
+              file={file}
+              dictionary={dictionary}
+              onFile={setFile}
+            />
+            <AnsweringSettings
+              settings={settings}
+              limits={boot.defaults.limits}
+              onChange={setSettings}
+              canClear={messages.length > 0 && !pending}
+              onClear={() => setMessages([])}
+            />
+          </>
+        )}
+      </aside>
+      <div className="scrim" onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+
+      <div className="main">
+        {!sidebarOpen && (
+          <button
+            type="button"
+            className="sidebar-toggle icon-button"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Open settings"
+          >
+            »
+          </button>
+        )}
+        <main className="content">
+          <h1>Scamwatch SQL assistant</h1>
+          {!boot.defaults && !boot.error && <Spinner>Loading settings…</Spinner>}
+          {boot.error && <Alert kind="error">Couldn&apos;t load the app&apos;s settings. {boot.error}</Alert>}
+          {connection.status === 'connecting' && <Spinner>Connecting to Azure SQL and reading the table schema…</Spinner>}
+          {connection.status === 'error' && <ConnectionError config={connection.config} error={connection.error} />}
+          {ready && (
+            <>
+              <Caption>
+                Ask a question in plain English. The assistant writes T-SQL, runs it against {table} in{' '}
+                {connection.config.database}, and explains what it found.
+              </Caption>
+              <TableOverview info={connection.info} table={table} dictionary={dictionary.value} />
+
+              <div className="messages">
+                {messages.map((message, index) => (
+                  <ChatMessage key={index} role={message.role}>
+                    {message.role === 'user' ? (
+                      <MarkdownText>{message.content}</MarkdownText>
+                    ) : (
+                      <Answer message={message} fileKey={index} />
+                    )}
+                  </ChatMessage>
+                ))}
+                {pending && (
+                  <ChatMessage role="assistant">
+                    <Spinner>Writing and running SQL…</Spinner>
+                  </ChatMessage>
+                )}
+              </div>
+              {!messages.length && !pending && (
+                <Examples hasDictionary={Boolean(dictionary.value)} disabled={dictionary.loading} onAsk={ask} />
+              )}
+              <div ref={bottom} />
+            </>
+          )}
+        </main>
+        {ready && (
+          <div className="chat-input-bar">
+            <ChatInput placeholder="Ask about the scam reports…" disabled={pending || dictionary.loading} onSubmit={ask} />
+          </div>
+        )}
       </div>
-      <h1>React SPA on Azure Functions</h1>
-      <p>
-        This page is served by the <code>spaHandler</code> function and talks to the{' '}
-        <code>apiStatus</code> function on the same origin.
-      </p>
-      <ApiStatus />
-    </>
+    </div>
   )
 }
-
-function About() {
-  return (
-    <>
-      <h1>About</h1>
-      <p>
-        This is a client-side route. Reload the page on <code>/about</code>: the Functions host
-        has no file at that path, so the catch-all route returns <code>index.html</code> and
-        React Router renders this view.
-      </p>
-    </>
-  )
-}
-
-function NotFound() {
-  const { pathname } = useLocation()
-  return (
-    <>
-      <h1>404</h1>
-      <p>
-        No client-side route matches <code>{pathname}</code>. <Link to="/">Go home</Link>
-      </p>
-    </>
-  )
-}
-
-function App() {
-  return (
-    <>
-      <nav className="nav">
-        <NavLink to="/" end>
-          Home
-        </NavLink>
-        <NavLink to="/about">About</NavLink>
-        <NavLink to="/does/not/exist">Missing page</NavLink>
-      </nav>
-      <main className="content">
-        <Routes>
-          <Route path="/" element={<Home />} />
-          <Route path="/about" element={<About />} />
-          <Route path="*" element={<NotFound />} />
-        </Routes>
-      </main>
-    </>
-  )
-}
-
-export default App

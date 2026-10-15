@@ -2,14 +2,17 @@
   "name": "api",
   "version": "1.0.0",
   "private": true,
-  "description": "Azure Functions v4 (Node.js) app that serves /api/status and the built React SPA",
+  "description": "Azure Functions v4 (Node.js) API for the Scamwatch SQL assistant; also serves the built SPA",
   "main": "src/functions/*.js",
   "scripts": {
     "start": "func start",
     "test": "node --test"
   },
   "dependencies": {
-    "@azure/functions": "^4.16.5"
+    "@azure/functions": "^4.16.5",
+    "@azure/identity": "^4.14.0",
+    "mssql": "^12.7.6",
+    "openai": "^7.34.0"
   },
   "engines": {
     "node": ">=20"

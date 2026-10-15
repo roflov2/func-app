@@ -2,7 +2,7 @@
   "name": "func-app",
   "version": "1.0.0",
   "private": true,
-  "description": "Vite + React SPA served by a Node.js Azure Functions (v4) app on http://localhost:7071",
+  "description": "Scamwatch SQL assistant: a React chat SPA and Azure Functions (v4) API that turn questions into read-only T-SQL with Azure OpenAI",
   "scripts": {
     "postinstall": "npm install --prefix client && npm install --prefix api",
     "build": "npm run build --prefix client",
