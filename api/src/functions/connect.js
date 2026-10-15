@@ -4,8 +4,9 @@ const { getAgent } = require('../lib/agentCache');
 const { dictionaryTemplate, templateFileName } = require('../lib/dataDictionary');
 const { isJsonRequest, readJson, errorResponse, jsonResponse } = require('../lib/http');
 
-// Connects to the table (or reuses the cached connection) and returns what the
-// page shows about it: columns, sample rows and a data dictionary template.
+// Connects to the table and the model deployment (or reuses the cached
+// connection) and returns what the page shows: how each service answered, the
+// table's columns, sample rows and a data dictionary template.
 app.http('connect', {
     methods: ['POST'],
     authLevel: 'anonymous',
@@ -24,12 +25,13 @@ app.http('connect', {
         try {
             agent = await getAgent(config);
         } catch (err) {
-            context.warn(`Couldn't connect to ${config.table} on ${config.server}: ${err.message}`);
-            return errorResponse(502, err.message || String(err));
+            context.warn(`Couldn't connect with the settings for ${config.table} on ${config.server}: ${err.message}`);
+            return errorResponse(502, err.message || String(err), err.services ? { services: err.services } : {});
         }
 
         return jsonResponse({
             config,
+            services: agent.services,
             columns: agent.columns,
             sampleRows: agent.sampleRows,
             template: dictionaryTemplate(config.table, agent.columns),

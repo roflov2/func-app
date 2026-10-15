@@ -2,6 +2,7 @@ const { DefaultAzureCredential, getBearerTokenProvider } = require('@azure/ident
 const { AzureOpenAI } = require('openai');
 const { createSqlClient } = require('./sqlClient');
 const { TextToSQLAgent } = require('./textToSqlAgent');
+const { checkModel, connectServices } = require('./connectionCheck');
 
 const COGNITIVE_SERVICES_SCOPE = 'https://cognitiveservices.azure.com/.default';
 
@@ -9,14 +10,11 @@ const COGNITIVE_SERVICES_SCOPE = 'https://cognitiveservices.azure.com/.default';
 let credential = null;
 
 /**
- * Create an agent for one set of connection settings.
- *
- * The agent is shared by every user, so it holds no per-user state; each
- * user's data dictionary is passed in with their questions instead.
- *
- * @throws {Error} If the table schema can't be read, so a broken agent is never cached.
+ * Build the Azure OpenAI and Azure SQL clients for one set of connection
+ * settings. Both sign in with the same Entra ID credential, so no keys or SQL
+ * passwords are stored. Nothing connects until the first request.
  */
-async function buildAgent(config) {
+function createClients(config) {
     credential ??= new DefaultAzureCredential();
     const openaiClient = new AzureOpenAI({
         endpoint: config.endpoint,
@@ -25,18 +23,32 @@ async function buildAgent(config) {
         azureADTokenProvider: getBearerTokenProvider(credential, COGNITIVE_SERVICES_SCOPE),
     });
     const sqlClient = createSqlClient({ server: config.server, database: config.database, credential });
-    const agent = await TextToSQLAgent.create({
-        tableName: config.table,
-        openaiClient,
+    return { openaiClient, sqlClient };
+}
+
+/**
+ * Create an agent for one set of connection settings, checking that both the
+ * table and the model deployment answer.
+ *
+ * The agent is shared by every user, so it holds no per-user state; each
+ * user's data dictionary is passed in with their questions instead.
+ *
+ * @throws {ConnectionError} If either service fails, so a broken agent is never cached.
+ */
+async function buildAgent(config) {
+    const { openaiClient, sqlClient } = createClients(config);
+    return connectServices({
         sqlClient,
-        deploymentName: config.deployment,
-        llmPreviewLimit: config.previewLimit,
+        createAgent: () =>
+            TextToSQLAgent.create({
+                tableName: config.table,
+                openaiClient,
+                sqlClient,
+                deploymentName: config.deployment,
+                llmPreviewLimit: config.previewLimit,
+            }),
+        checkModel: () => checkModel(openaiClient, config.deployment),
     });
-    if (agent.schemaError) {
-        await sqlClient.close().catch(() => {});
-        throw new Error(agent.schemaError);
-    }
-    return agent;
 }
 
 const agents = new Map();
@@ -66,4 +78,4 @@ function getAgent(config, build = buildAgent) {
     return pending;
 }
 
-module.exports = { getAgent };
+module.exports = { buildAgent, getAgent };

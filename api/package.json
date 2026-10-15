@@ -6,7 +6,8 @@
   "main": "src/functions/*.js",
   "scripts": {
     "start": "func start",
-    "test": "node --test"
+    "test": "node --test",
+    "check:connection": "node scripts/checkConnection.js"
   },
   "dependencies": {
     "@azure/functions": "^4.16.5",

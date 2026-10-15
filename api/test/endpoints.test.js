@@ -4,6 +4,7 @@ const { test, before } = require('node:test');
 const assert = require('node:assert/strict');
 const { app, HttpRequest, InvocationContext } = require('@azure/functions');
 const agentCache = require('../src/lib/agentCache');
+const { ConnectionError } = require('../src/lib/connectionCheck');
 
 const handlers = {};
 const CONFIG = {
@@ -15,7 +16,9 @@ const CONFIG = {
     deployment: 'gpt-4o',
     previewLimit: 20,
 };
+const SERVICES = { sql: { ok: true }, model: { ok: true, model: 'gpt-4o-2024-11-20' } };
 const fakeAgent = {
+    services: SERVICES,
     columns: [
         { name: 'report_id', type: 'int' },
         { name: 'status', type: 'nvarchar' },
@@ -37,6 +40,7 @@ let connectError = null;
 
 before(() => {
     agentCache.getAgent = async (config) => {
+        if (connectError instanceof Error) throw connectError;
         if (connectError) throw new Error(connectError);
         assert.equal(config.server, CONFIG.server);
         return fakeAgent;
@@ -80,9 +84,10 @@ test('GET /api/config returns the default settings and limits', async () => {
     assert.equal(res.jsonBody.limits.maxDictionaryChars, 40000);
 });
 
-test('POST /api/connect returns columns, sample rows and a template', async () => {
+test('POST /api/connect returns each service, columns, sample rows and a template', async () => {
     const res = await postJson('connect', { config: CONFIG });
     assert.equal(res.status, 200);
+    assert.deepEqual(res.jsonBody.services, SERVICES);
     assert.deepEqual(res.jsonBody.columns, fakeAgent.columns);
     assert.deepEqual(res.jsonBody.sampleRows, fakeAgent.sampleRows);
     assert.match(res.jsonBody.template, /\nreport_id \(int\):\nstatus \(nvarchar\):\n/);
@@ -105,6 +110,22 @@ test('POST /api/connect reports bad settings and connection failures', async () 
 
     const notJson = await invoke('connect', { body: { string: '{' }, headers: { 'content-type': 'application/json' } });
     assert.equal(notJson.status, 400);
+});
+
+test('connection failures say which service failed', async () => {
+    const services = { sql: { ok: true }, model: { ok: false, error: '404 DeploymentNotFound' } };
+    connectError = new ConnectionError(services);
+    try {
+        const connect = await postJson('connect', { config: CONFIG });
+        assert.equal(connect.status, 502);
+        assert.deepEqual(connect.jsonBody, { error: 'Azure OpenAI: 404 DeploymentNotFound', services });
+
+        const ask = await postJson('ask', { config: CONFIG, question: 'q' });
+        assert.equal(ask.status, 502);
+        assert.deepEqual(ask.jsonBody, { error: "Couldn't connect. Azure OpenAI: 404 DeploymentNotFound", services });
+    } finally {
+        connectError = null;
+    }
 });
 
 test('endpoints that run queries refuse bodies that are not sent as JSON', async () => {
@@ -170,7 +191,7 @@ test('POST /api/query rejects bad requests and reports connection failures', asy
     try {
         const res = await postJson('ask', { config: CONFIG, question: 'q' });
         assert.equal(res.status, 502);
-        assert.equal(res.jsonBody.error, "Couldn't connect to Reporting.Reports on myserver.database.windows.net. Timeout");
+        assert.equal(res.jsonBody.error, "Couldn't connect. Timeout");
     } finally {
         connectError = null;
     }

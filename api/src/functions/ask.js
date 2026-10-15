@@ -28,8 +28,12 @@ app.http('ask', {
         try {
             agent = await getAgent(config);
         } catch (err) {
-            context.warn(`Couldn't connect to ${config.table} on ${config.server}: ${err.message}`);
-            return errorResponse(502, `Couldn't connect to ${config.table} on ${config.server}. ${err.message}`);
+            context.warn(`Couldn't connect with the settings for ${config.table} on ${config.server}: ${err.message}`);
+            return errorResponse(
+                502,
+                `Couldn't connect. ${err.message}`,
+                err.services ? { services: err.services } : {},
+            );
         }
 
         return jsonResponse(await askAgent(agent, ask));

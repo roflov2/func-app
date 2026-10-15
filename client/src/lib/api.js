@@ -14,7 +14,9 @@ async function request(path, options) {
     // Not JSON: fall back to the status code below.
   }
   if (!response.ok) {
-    throw new Error(body?.error || `The API returned HTTP ${response.status}.`)
+    const error = new Error(body?.error || `The API returned HTTP ${response.status}.`)
+    error.services = body?.services ?? null // how each service answered a failed connect
+    throw error
   }
   return body
 }
@@ -29,7 +31,10 @@ const postJson = (path, body) =>
 /** Default connection settings (from the Function App's settings) and input limits. */
 export const getConfig = () => request('/api/config')
 
-/** Connect to the table. Returns its columns, sample rows and a data dictionary template. */
+/**
+ * Connect to the table and check the model deployment. Returns how each service answered, the
+ * table's columns, sample rows and a data dictionary template.
+ */
 export const connect = (config) => postJson('/api/connect', { config })
 
 /** Read an uploaded data dictionary and check which of the columns it names. */

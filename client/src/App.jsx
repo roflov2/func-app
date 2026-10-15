@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import { askQuestion, connect, getConfig, readDictionary } from './lib/api.js'
 import { buildHistory, EXAMPLE_QUESTIONS } from './lib/chat.js'
 import { Answer, ChatInput, ChatMessage, MarkdownText } from './components/Chat.jsx'
@@ -9,23 +9,65 @@ import './App.css'
 
 const WIDE_SCREEN = '(min-width: 900px)'
 
-function ConnectionError({ config, error }) {
+const FAILURES = {
+  sql: {
+    title: (config) => `Couldn't connect to ${config.table} on ${config.server}.`,
+    hints: (
+      <>
+        <li>
+          the app&apos;s Azure identity can read the table: your <code>az login</code> account when running locally,
+          or the Function App&apos;s managed identity in Azure
+        </li>
+        <li>the Functions host can reach the server on port 1433 (the server&apos;s firewall allows it)</li>
+      </>
+    ),
+  },
+  model: {
+    title: (config) => `Couldn't use the ${config.deployment} deployment at ${config.endpoint}.`,
+    hints: (
+      <>
+        <li>
+          the same identity has the <em>Cognitive Services OpenAI User</em> role on the Azure OpenAI resource
+        </li>
+        <li>the endpoint, deployment name and API version match the deployment in Azure AI Foundry</li>
+      </>
+    ),
+  },
+}
+
+/**
+ * Says which service failed and how to fix it. `services` is missing when the request never
+ * reached them, e.g. a setting was rejected.
+ */
+function ConnectionError({ config, error, services }) {
+  const failed = services ? Object.keys(FAILURES).filter((key) => !services[key]?.ok) : null
   return (
     <>
       <Alert kind="error">
-        <p>
-          Couldn&apos;t connect to {config.table} on {config.server}.
-        </p>
-        <p className="pre-line">{error}</p>
+        {failed ? (
+          failed.map((key) => (
+            <div key={key}>
+              <p>
+                <strong>{FAILURES[key].title(config)}</strong>
+              </p>
+              <p className="pre-line">{services[key].error}</p>
+            </div>
+          ))
+        ) : (
+          <>
+            <p>
+              Couldn&apos;t connect to {config.table} on {config.server}.
+            </p>
+            <p className="pre-line">{error}</p>
+          </>
+        )}
       </Alert>
       <div className="markdown">
         <p>To fix this, check that:</p>
         <ul>
-          <li>
-            the app&apos;s Azure identity can read the table: your <code>az login</code> account when running
-            locally, or the Function App&apos;s managed identity in Azure
-          </li>
-          <li>the Functions host can reach the server on port 1433</li>
+          {(failed ?? Object.keys(FAILURES)).map((key) => (
+            <Fragment key={key}>{FAILURES[key].hints}</Fragment>
+          ))}
         </ul>
         <p>
           Then update the settings in the sidebar if needed and select <strong>Connect</strong>.
@@ -91,8 +133,15 @@ function Examples({ hasDictionary, disabled, onAsk }) {
 
 export default function App() {
   const [boot, setBoot] = useState({ defaults: null, error: null })
-  // status: idle | connecting | ready | error. `info` is the /api/connect response.
-  const [connection, setConnection] = useState({ status: 'idle', config: null, info: null, error: null })
+  // status: idle | connecting | ready | error. `info` is the /api/connect response, and
+  // `services` says how Azure SQL and Azure OpenAI each answered.
+  const [connection, setConnection] = useState({
+    status: 'idle',
+    config: null,
+    info: null,
+    services: null,
+    error: null,
+  })
   const [file, setFile] = useState(null)
   const [dictionaryResult, setDictionaryResult] = useState(null)
   const [settings, setSettings] = useState({ maxAttempts: 3, useHistory: true })
@@ -104,15 +153,15 @@ export default function App() {
 
   const connectTo = useCallback(async (config) => {
     const attempt = ++latestConnect.current
-    setConnection({ status: 'connecting', config, info: null, error: null })
+    setConnection({ status: 'connecting', config, info: null, services: null, error: null })
     try {
       const info = await connect(config)
       if (attempt === latestConnect.current) {
-        setConnection({ status: 'ready', config: info.config, info, error: null })
+        setConnection({ status: 'ready', config: info.config, info, services: info.services, error: null })
       }
     } catch (err) {
       if (attempt === latestConnect.current) {
-        setConnection({ status: 'error', config, info: null, error: err.message })
+        setConnection({ status: 'error', config, info: null, services: err.services, error: err.message })
       }
     }
   }, [])
@@ -194,7 +243,12 @@ export default function App() {
         </div>
         {boot.defaults && (
           // The connection form comes first so it's still there to fix if connecting fails.
-          <ConnectionSettings config={boot.defaults.config} limits={boot.defaults.limits} onConnect={connectTo} />
+          <ConnectionSettings
+            config={boot.defaults.config}
+            limits={boot.defaults.limits}
+            connection={connection}
+            onConnect={connectTo}
+          />
         )}
         {ready && (
           <>
@@ -232,8 +286,10 @@ export default function App() {
           <h1>Scamwatch SQL assistant</h1>
           {!boot.defaults && !boot.error && <Spinner>Loading settings…</Spinner>}
           {boot.error && <Alert kind="error">Couldn&apos;t load the app&apos;s settings. {boot.error}</Alert>}
-          {connection.status === 'connecting' && <Spinner>Connecting to Azure SQL and reading the table schema…</Spinner>}
-          {connection.status === 'error' && <ConnectionError config={connection.config} error={connection.error} />}
+          {connection.status === 'connecting' && <Spinner>Connecting to Azure SQL and Azure OpenAI…</Spinner>}
+          {connection.status === 'error' && (
+            <ConnectionError config={connection.config} error={connection.error} services={connection.services} />
+          )}
           {ready && (
             <>
               <Caption>
