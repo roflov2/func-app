@@ -144,13 +144,17 @@ proxy strips that prefix before forwarding to the Functions host. `client/src/li
 detects the prefix at runtime and adds it to every API call. Anywhere else the prefix doesn't
 match, so calls go to `/api/...` as usual.
 
-Compute instances can come with an older Node. Check `node --version` first; if it's below
-20.19 or 22.12, install a newer one, e.g. with [nvm](https://github.com/nvm-sh/nvm):
+Compute instances can come with an older Node (the `azureml_py38` conda environment has
+22.9). Check `node --version` first; if it's below 20.19 or 22.12, install a newer one. This
+gets the official Linux binary, repackaged on the npm registry, so it works wherever
+`npm install` does, including behind a proxy that inspects TLS:
 
 ```sh
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-source ~/.bashrc
-nvm install 22        # then: rm -rf node_modules client/node_modules api/node_modules
+cd ~ && npm pack node-linux-x64@22.22.0
+mkdir -p ~/node && tar -xzf node-linux-x64-22.22.0.tgz -C ~/node --strip-components=1
+echo 'export PATH="$HOME/node/bin:$PATH"' >> ~/.bashrc
+export PATH="$HOME/node/bin:$PATH" && hash -r
+node --version        # v22.22.0; the existing npm and func use it too
 ```
 
 The built `index.html` must also load its assets relative to the proxy path, so build with a
