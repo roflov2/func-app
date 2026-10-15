@@ -34,8 +34,42 @@ function Field({ label, help, children }) {
   )
 }
 
-/** The connection form. Connect applies the new settings. */
-export function ConnectionSettings({ config, limits, onConnect }) {
+const SERVICES = [
+  { key: 'sql', name: 'Azure SQL', detail: (config) => `${config.server} / ${config.database}` },
+  {
+    key: 'model',
+    name: 'Azure OpenAI',
+    detail: (config, check) => (check?.model ? `${config.deployment} (${check.model})` : config.deployment),
+  },
+]
+
+const STATE_TEXT = { checking: 'Checking…', ok: 'Connected', failed: 'Failed', unknown: 'Not checked' }
+
+/** How each service answered the last Connect. */
+function ConnectionStatus({ connection }) {
+  const { status, config, services } = connection
+  if (!config) return null
+  return (
+    <ul className="service-status" aria-label="Connection status">
+      {SERVICES.map(({ key, name, detail }) => {
+        const check = services?.[key]
+        const state = status === 'connecting' ? 'checking' : !check ? 'unknown' : check.ok ? 'ok' : 'failed'
+        return (
+          <li key={key}>
+            <span className={`status-dot status-${state}`} aria-hidden="true" />
+            <span>
+              <span className="service-name">{name}</span>: {STATE_TEXT[state]}
+            </span>
+            <span className="service-detail">{detail(config, check)}</span>
+          </li>
+        )
+      })}
+    </ul>
+  )
+}
+
+/** The connection form, and how each service answered. Connect applies the new settings. */
+export function ConnectionSettings({ config, limits, connection, onConnect }) {
   const [form, setForm] = useState(config)
   const set = (key) => (event) => setForm({ ...form, [key]: event.target.value })
 
@@ -86,6 +120,7 @@ export function ConnectionSettings({ config, limits, onConnect }) {
           Connect
         </button>
       </form>
+      <ConnectionStatus connection={connection} />
     </section>
   )
 }

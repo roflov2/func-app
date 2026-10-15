@@ -14,8 +14,8 @@ async function readJson(request) {
     }
 }
 
-function errorResponse(status, error) {
-    return { status, headers: { 'Cache-Control': 'no-store' }, jsonBody: { error } };
+function errorResponse(status, error, extra = {}) {
+    return { status, headers: { 'Cache-Control': 'no-store' }, jsonBody: { error, ...extra } };
 }
 
 function jsonResponse(body) {

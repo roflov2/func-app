@@ -18,6 +18,7 @@
   --warning-text: #6b4f00;
   --info-bg: #e7f0fc;
   --info-text: #0b3a74;
+  --ok: #1a7f37;
   --sql-keyword: #0550ae;
   --sql-string: #0a7d35;
   --sql-number: #953800;
@@ -52,6 +53,7 @@
     --warning-text: #ffe08a;
     --info-bg: rgba(61, 157, 243, 0.16);
     --info-text: #b5d8ff;
+    --ok: #3fb950;
     --sql-keyword: #79c0ff;
     --sql-string: #a5d6a7;
     --sql-number: #ffab70;

@@ -119,6 +119,62 @@
   border-radius: 8px;
 }
 
+.service-status {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+
+.service-status li {
+  display: grid;
+  grid-template-columns: 10px 1fr;
+  column-gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.service-name {
+  font-weight: 600;
+}
+
+.service-detail {
+  grid-column: 2;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.status-ok {
+  background: var(--ok);
+}
+
+.status-failed {
+  background: var(--primary);
+}
+
+.status-checking {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-checking {
+    animation: none;
+  }
+}
+
 .field {
   display: flex;
   flex-direction: column;

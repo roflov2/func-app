@@ -10,7 +10,8 @@
     "start:api": "npm start --prefix api",
     "dev:client": "npm run dev --prefix client",
     "lint": "npm run lint --prefix client",
-    "test": "npm test --prefix api"
+    "test": "npm test --prefix api",
+    "check:connection": "npm run check:connection --prefix api"
   },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
