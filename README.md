@@ -76,6 +76,27 @@ For frontend work with hot reload, run `npm run start:api` in one terminal and
 - If `client/dist` hasn't been built yet, the catch-all returns `503` with a message to run
   `npm run build`.
 
+## Running behind the Azure ML Jupyter proxy
+
+On an Azure ML compute instance, the app is reached at `https://<instance>/proxy/7071/`, and the
+proxy strips that prefix before forwarding to the Functions host. The client handles this at
+runtime. `client/src/main.jsx` uses `/proxy/<port>` as the React Router `basename`, and
+`client/src/App.jsx` prepends it to the `/api/status` call. Anywhere else (localhost, a real
+Function App) the prefix doesn't match, so the router root stays `/` and the call stays
+`/api/status`.
+
+The built `index.html` must also load assets relative to the proxy path, so build with a
+relative base on AML:
+
+```sh
+npm run build --prefix client -- --base=./   # or: cd client && npx vite build --base=./
+npm run start:api
+```
+
+Keep the relative base out of `vite.config.js`. With `--base=./`, reloading a client route two
+or more levels deep (e.g. `/does/not/exist`) loads assets from `/does/not/assets/...` and shows a
+blank page. The default absolute base used by `npm run build` doesn't have this problem.
+
 ## Deploying to Azure
 
 Only `api/` is deployed as the Function App, so ship the SPA build inside it. For example,

@@ -4,9 +4,13 @@ import reactLogo from './assets/react.svg'
 import viteLogo from './assets/vite.svg'
 import './App.css'
 
+// Keep API calls inside the Azure ML proxy (/proxy/<port>) when running behind it,
+// including from nested client routes like /proxy/7071/about. Empty elsewhere.
+const proxyPrefix = window.location.pathname.match(/^(\/proxy\/\d+)/)?.[1] ?? ''
+
 async function fetchStatus() {
   try {
-    const res = await fetch('/api/status', { headers: { Accept: 'application/json' } })
+    const res = await fetch(`${proxyPrefix}/api/status`, { headers: { Accept: 'application/json' } })
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     return { loading: false, data: await res.json(), error: null }
   } catch (err) {
