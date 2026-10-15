@@ -6,7 +6,6 @@
     "SPA_DIST_PATH": "../client/dist"
   },
   "Host": {
-    "LocalHttpPort": 7071,
-    "CORS": "*"
+    "LocalHttpPort": 7071
   }
 }

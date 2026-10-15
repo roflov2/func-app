@@ -103,8 +103,24 @@ test('POST /api/connect reports bad settings and connection failures', async () 
         connectError = null;
     }
 
-    const notJson = await invoke('connect', { body: { string: '{' } });
+    const notJson = await invoke('connect', { body: { string: '{' }, headers: { 'content-type': 'application/json' } });
     assert.equal(notJson.status, 400);
+});
+
+test('endpoints that run queries refuse bodies that are not sent as JSON', async () => {
+    // A cross-site page can post text/plain without a CORS preflight.
+    for (const name of ['connect', 'ask']) {
+        const res = await invoke(name, {
+            body: { string: JSON.stringify({ config: CONFIG, question: 'q' }) },
+            headers: { 'content-type': 'text/plain;charset=UTF-8' },
+        });
+        assert.equal(res.status, 415, name);
+    }
+    const withCharset = await invoke('connect', {
+        body: { string: JSON.stringify({ config: CONFIG }) },
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+    assert.equal(withCharset.status, 200);
 });
 
 test('POST /api/dictionary reads an uploaded file', async () => {

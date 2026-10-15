@@ -14,6 +14,8 @@ test('allows single SELECT and WITH statements', () => {
         'SELECT a -- DROP TABLE t;\nFROM t',
         'SELECT a /* ; DELETE FROM t */ FROM t',
         'SELECT created_at, updated_by FROM t',
+        'SELECT * FROM t ORDER BY a OFFSET 10 ROWS FETCH NEXT 5 ROWS ONLY',
+        'SELECT @@ROWCOUNT, data_set, [begin], "set", IIF(a > 1, 1, 0) FROM t',
     ]) {
         assert.equal(validateReadOnly(query), null, query);
     }
@@ -33,6 +35,20 @@ test('rejects statements that are not SELECT or WITH', () => {
 test('rejects more than one statement', () => {
     assert.equal(validateReadOnly('SELECT 1; SELECT 2'), 'Only one statement is allowed per query.');
     assert.equal(validateReadOnly('SELECT 1; DROP TABLE t'), 'Only one statement is allowed per query.');
+});
+
+test('rejects statements chained without a semicolon', () => {
+    for (const [query, word] of [
+        ['SELECT 1 BEGIN TRAN SELECT * FROM t WITH (TABLOCKX, HOLDLOCK)', 'BEGIN'],
+        ['SELECT 1 KILL 53', 'KILL'],
+        ["SELECT 1 WAITFOR DELAY '01:00:00'", 'WAITFOR'],
+        ['SELECT 1 USE master', 'USE'],
+        ['SELECT 1 SET ROWCOUNT 1', 'SET'],
+        ['SELECT 1 DISABLE TRIGGER trg ON t', 'TRIGGER'],
+        ['SELECT 1 WHILE 1 = 1 SELECT 2', 'WHILE'],
+    ]) {
+        assert.equal(validateReadOnly(query), `'${word}' is not allowed in a read-only query.`, query);
+    }
 });
 
 test('rejects write keywords anywhere in the code', () => {

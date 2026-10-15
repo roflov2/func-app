@@ -2,12 +2,16 @@ import { useMemo, useState } from 'react'
 
 const PAGE_SIZE = 100
 
+// One collator for every comparison: localeCompare with options builds a new one
+// each call, which takes seconds to sort a 50,000-row result.
+const collator = new Intl.Collator(undefined, { numeric: true })
+
 function compareValues(a, b) {
   if (a === b) return 0
   if (a === null || a === undefined) return 1 // blanks sort last either way
   if (b === null || b === undefined) return -1
   if (typeof a === 'number' && typeof b === 'number') return a - b
-  return String(a).localeCompare(String(b), undefined, { numeric: true })
+  return collator.compare(String(a), String(b))
 }
 
 function Cell({ value }) {

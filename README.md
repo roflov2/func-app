@@ -19,7 +19,10 @@ way:
 - **Table overview:** the columns and types (plus whether the dictionary covers each one),
   three sample rows, and the dictionary text.
 - **Read-only SQL.** Only a single `SELECT` (or `WITH … SELECT`) runs. Write keywords,
-  multiple statements and `SELECT … INTO` are rejected before the query reaches the database.
+  multiple statements and `SELECT … INTO` are rejected before the query reaches the database,
+  as are statement keywords such as `BEGIN TRAN`, `SET`, `USE` and `KILL` (T-SQL doesn't need a
+  `;` between statements). This check is a backstop: the identity's SQL permissions are the real
+  limit.
   The model sees at most the preview row limit, with min/max/mean for numeric columns. The
   table always shows the full result, up to 50,000 rows.
 

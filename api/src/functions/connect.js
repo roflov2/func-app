@@ -2,7 +2,7 @@ const { app } = require('@azure/functions');
 const { validateConfig } = require('../lib/config');
 const { getAgent } = require('../lib/agentCache');
 const { dictionaryTemplate, templateFileName } = require('../lib/dataDictionary');
-const { readJson, errorResponse, jsonResponse } = require('../lib/http');
+const { isJsonRequest, readJson, errorResponse, jsonResponse } = require('../lib/http');
 
 // Connects to the table (or reuses the cached connection) and returns what the
 // page shows about it: columns, sample rows and a data dictionary template.
@@ -11,6 +11,9 @@ app.http('connect', {
     authLevel: 'anonymous',
     route: 'api/connect',
     handler: async (request, context) => {
+        if (!isJsonRequest(request)) {
+            return errorResponse(415, 'Send the request body as application/json.');
+        }
         const body = await readJson(request);
         const { config, error } = validateConfig(body?.config);
         if (error) {
