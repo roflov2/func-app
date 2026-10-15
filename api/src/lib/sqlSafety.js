@@ -11,9 +11,16 @@ const NON_CODE = new RegExp(
     'g',
 );
 
+// T-SQL doesn't need semicolons between statements ("SELECT 1 KILL 53" is a valid
+// batch), so the second group blocks words that can only start a statement:
+// transactions and locks, session state, admin commands and legacy text writes.
+// They're all reserved words, so a column can only use them in [brackets] or
+// "quotes", which are masked before this check.
 const WRITE_KEYWORDS = new RegExp(
     '\\b(INSERT|UPDATE|DELETE|MERGE|DROP|ALTER|CREATE|TRUNCATE|EXEC|EXECUTE|GRANT|' +
-        'REVOKE|DENY|INTO|BACKUP|RESTORE|SHUTDOWN|DBCC|BULK|OPENROWSET|OPENQUERY|OPENDATASOURCE)\\b',
+        'REVOKE|DENY|INTO|BACKUP|RESTORE|SHUTDOWN|DBCC|BULK|OPENROWSET|OPENQUERY|OPENDATASOURCE|' +
+        'BEGIN|COMMIT|ROLLBACK|SAVE|TRAN|TRANSACTION|SET|USE|DECLARE|WAITFOR|WHILE|KILL|' +
+        'RECONFIGURE|CHECKPOINT|SETUSER|WRITETEXT|UPDATETEXT|TRIGGER)\\b',
     'i',
 );
 

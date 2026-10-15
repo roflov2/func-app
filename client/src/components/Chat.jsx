@@ -35,10 +35,15 @@ const markdownComponents = {
   ),
 }
 
+// Answers can quote free text from public scam reports. An image there would be
+// fetched as soon as it renders, so a planted ![](https://…?data=…) could send
+// query results to another site. Links at least need a click.
+const disallowedElements = ['img']
+
 export function MarkdownText({ children }) {
   return (
     <div className="markdown">
-      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+      <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents} disallowedElements={disallowedElements}>
         {children}
       </Markdown>
     </div>
