@@ -69,7 +69,7 @@ retries.
 
 ## Prerequisites
 
-- Node.js 20 or newer
+- Node.js 20.19+ or 22.12+ (Vite 8 needs it; `npm install` in `client/` refuses older versions)
 - [Azure Functions Core Tools v4](https://learn.microsoft.com/azure/azure-functions/functions-run-local)
   (`npm install -g azure-functions-core-tools@4`)
 - The [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli), signed in with an
@@ -144,13 +144,26 @@ proxy strips that prefix before forwarding to the Functions host. `client/src/li
 detects the prefix at runtime and adds it to every API call. Anywhere else the prefix doesn't
 match, so calls go to `/api/...` as usual.
 
+Compute instances can come with an older Node. Check `node --version` first; if it's below
+20.19 or 22.12, install a newer one, e.g. with [nvm](https://github.com/nvm-sh/nvm):
+
+```sh
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+source ~/.bashrc
+nvm install 22        # then: rm -rf node_modules client/node_modules api/node_modules
+```
+
 The built `index.html` must also load its assets relative to the proxy path, so build with a
 relative base on AML:
 
 ```sh
+npm install
 npm run build --prefix client -- --base=./   # or: cd client && npx vite build --base=./
 npm run start:api
 ```
+
+The API serves the build straight from `client/dist`, so there's nothing to copy. The page and
+the API share the proxy's origin, so `func start` needs no `--cors` flag.
 
 Keep the relative base out of `vite.config.js`. The default absolute base is right everywhere
 else.
